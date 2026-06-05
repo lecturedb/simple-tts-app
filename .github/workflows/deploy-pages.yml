@@ -1,0 +1,108 @@
+name: Deploy GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy static site
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Prepare static site files
+        id: prepare
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          build_dir="${RUNNER_TEMP}/site-build"
+          rm -rf "${build_dir}"
+          mkdir -p "${build_dir}"
+
+          cp index.html "${build_dir}/"
+          cp styles.css "${build_dir}/"
+
+          if [[ -f app.js ]]; then
+            cp app.js "${build_dir}/"
+          fi
+
+          if [[ -d assets ]]; then
+            cp -R assets "${build_dir}/assets"
+          fi
+
+          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            deploy_path="."
+            preview_url="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/"
+          else
+            branch_slug=$(printf '%s' "${GITHUB_REF_NAME}" | sed -E 's#[^A-Za-z0-9._-]+#-#g; s#^-+##; s#-+$##')
+            deploy_path="previews/${branch_slug}"
+            preview_url="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/${deploy_path}/"
+          fi
+
+          echo "deploy_path=${deploy_path}" >> "${GITHUB_OUTPUT}"
+          echo "preview_url=${preview_url}" >> "${GITHUB_OUTPUT}"
+          echo "Deploy path: ${deploy_path}"
+          echo "Preview URL: ${preview_url}"
+
+      - name: Publish to gh-pages branch
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPLOY_PATH: ${{ steps.prepare.outputs.deploy_path }}
+        run: |
+          set -euo pipefail
+
+          pages_dir="${RUNNER_TEMP}/pages"
+          repo_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads "${repo_url}" gh-pages >/dev/null 2>&1; then
+            git clone --depth 1 --branch gh-pages "${repo_url}" "${pages_dir}"
+          else
+            mkdir -p "${pages_dir}"
+            git -C "${pages_dir}" init
+            git -C "${pages_dir}" checkout -b gh-pages
+            git -C "${pages_dir}" remote add origin "${repo_url}"
+          fi
+
+          if [[ "${DEPLOY_PATH}" == "." ]]; then
+            find "${pages_dir}" -mindepth 1 -maxdepth 1 \
+              ! -name .git \
+              ! -name previews \
+              -exec rm -rf {} +
+            cp -R "${RUNNER_TEMP}/site-build/." "${pages_dir}/"
+          else
+            rm -rf "${pages_dir}/${DEPLOY_PATH}"
+            mkdir -p "${pages_dir}/${DEPLOY_PATH}"
+            cp -R "${RUNNER_TEMP}/site-build/." "${pages_dir}/${DEPLOY_PATH}/"
+          fi
+
+          touch "${pages_dir}/.nojekyll"
+
+          git -C "${pages_dir}" add -A
+          if git -C "${pages_dir}" diff --cached --quiet; then
+            echo "No GitHub Pages changes to publish."
+            exit 0
+          fi
+
+          git -C "${pages_dir}" commit -m "Deploy ${GITHUB_REF_NAME} to GitHub Pages"
+          git -C "${pages_dir}" push origin gh-pages
+
+      - name: Print deployment URL
+        run: echo "Published to ${{ steps.prepare.outputs.preview_url }}"
