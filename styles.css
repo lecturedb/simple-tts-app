@@ -137,3 +137,24 @@ button:hover {
     width: 100%;
   }
 }
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+  transform: none;
+}
+
+#status-message[data-status="speaking"] {
+  color: #4f46e5;
+  font-weight: 700;
+}
+
+#status-message[data-status="complete"] {
+  color: #047857;
+  font-weight: 700;
+}
+
+#status-message[data-status="warning"] {
+  color: #b45309;
+  font-weight: 700;
+}
